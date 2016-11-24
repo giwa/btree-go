@@ -320,3 +320,73 @@ func (n *node) remove(item Item, minItems int, typ toRemove, ctx interface{}) It
 	// node and that the child is big enough to remove from.
 	return child.remove(item, minItems, typ, ctx)
 }
+
+// growChildAndRemove grows child `i` to make sure it's possible to remove an
+// item from it while keeping it at minItems, then cals remove to actually
+// remove it.
+//
+// Most documentation says we have to do two sets of special casting:
+//  1) item is in this node
+//  2) item is in child
+// In both cases, we need to handle the two subcases:
+//	A) node has enough values that it can spare one
+//  B) node doesn't have enough values
+// For the latter, we have to check:
+//  a) left sibling has node to spare
+//	b) right sibling has node to spare
+//  c) we must merge
+// To simplify our code here, we handle case #1 and #2 the same:
+// If a node doesn't have enough items, we make sure it does (using a,b,c)
+// We then simply redoour remove call, and the second time
+// whether we're in case 1 or 2), we'll have enough items and can guarantee
+// that we hit case A.
+func (n *node) growChildAndRemove(i int, item Item, minItems int, typ toRemove, ctx interface{}) Item {
+	child := n.children[i]
+	if i > 0 && len(n.children[i-1].items) > minItems {
+		// Steal from left child
+		stealFrom := n.children[i-1]
+		stolenItem := strealFrom.items.pop()
+		child.items.insertAt(0, n.items[i-1])
+		n.items[i-1] = stolenItem
+		if len(stealFrom.children) > 0 {
+			child.children.insertAt(0, stealFrom.children.pop())
+		}
+	} else if i < len(n.items) && len(n.children[i+1].items) > minItems {
+		// Steal from right child
+		stealFrom := n.children[i+1]
+		stolenItem := stealFrom.items.removeAt(0)
+		child.items = append(child.items, n.items[i])
+		n.items[i] = stolenItem
+		if len(stealFrom.children) > 0 {
+			child.children = append(child.children, stealFrom.children.removeAt(0))
+		}
+	} else {
+		if i >= len(n.items) {
+			i--
+			child = n.children[i]
+		}
+		// Merge with right child
+		mergeItem := n.items.removeAt(i)
+		mergeChild := n.children.removeAt(i + 1)
+		child.items = append(child.items, mergerItem)
+		child.items = append(child.items, mergeChild.items...)
+		child.children = append(child.children, mergeChild.children...)
+		n.t.freeNode(mergerChild)
+	}
+	return n.remove(item, minItems, typ, ctx)
+}
+
+type direction int
+
+const (
+	descend = direction(-1)
+	ascend  = direction(+1)
+)
+
+// iterate provides a simple method for iterating over elements in the tree
+//
+// When ascending, the `start` should be less than 'stop' and when descending,
+// the `start` should be greater than `stop`. Setting `includeStart` to true
+// will force the iterator to include the first item when it equals `start`,
+// thus creating a 'greaterOrEqual' or 'lessThanEqual' rather than just a
+// 'greaterThan' or 'lessThan' queries
